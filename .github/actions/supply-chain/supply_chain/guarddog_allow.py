@@ -34,10 +34,9 @@ import datetime as dt
 import json
 import os
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-
-import tomllib
 
 DEFAULT_WARN_WITHIN_DAYS = 14
 ALLOWLIST_NAME = "guarddog-allow.toml"

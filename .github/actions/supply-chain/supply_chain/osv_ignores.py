@@ -32,10 +32,9 @@ import argparse
 import datetime as dt
 import os
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-
-import tomllib
 
 DEFAULT_WARN_WITHIN_DAYS = 14
 
