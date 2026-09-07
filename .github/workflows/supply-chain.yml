@@ -212,7 +212,7 @@ jobs:
       #
       # Re-derive this set against the new version when the pin moves; do not
       # hand-edit it. tests/test_supply_chain_ci.py pins the exact membership.
-      GUARDDOG_RULES: |
+      GUARDDOG_RULES_PYPI: |
         deceptive_author
         metadata_mismatch
         potentially_compromised_email_domain
@@ -249,6 +249,61 @@ jobs:
         threat-setup-suspicious-imports
         typosquatting
         unclaimed_maintainer_email_domain
+      # --- The npm allowlist ------------------------------------------------------
+      #
+      # Separate on purpose. Calibrating on PyPI alone was not enough and the fleet
+      # canary proved it: speaker-id has no package.json, so this path was never
+      # measured, and the first repo merged went red. `metadata_mismatch` does not
+      # merely misfire on npm (next, pg, react-dom) — it hard-errors on some archive
+      # layouts, failing the job with no finding behind it.
+      #
+      # The catalogues genuinely differ, which settles the design: npm carries
+      # direct_url_dependency, provenance_regression and risky_new_dependency, and
+      # has no repository_integrity_mismatch. One list forced to satisfy both
+      # ecosystems is strictly weaker than two measured ones.
+      #
+      # Same standard: every rule below scored zero across 20 real npm packages in
+      # six repos; everything left out fired or errored on at least one.
+      # provenance_regression fired (pino) and is out.
+      #
+      # KNOWN LIMIT: `guarddog npm verify` cannot read a lockfile — pointed at
+      # package-lock.json it processes one entry — so this scans DECLARED DIRECT
+      # dependencies only. For totoro-dashboard that is 11 of 212 resolved packages.
+      # A malicious transitive npm dependency is not covered here; osv-scanner does
+      # read the lockfile and still covers the whole tree for known-bad packages.
+      GUARDDOG_RULES_NPM: |
+        deceptive_author
+        direct_url_dependency
+        potentially_compromised_email_domain
+        risky_new_dependency
+        threat-network-dns-exfil
+        threat-network-exfil-messenger
+        threat-network-reverse-shell
+        threat-npm-dependency-confusion
+        threat-npm-http-dependency
+        threat-npm-preinstall-script
+        threat-process-cryptomining
+        threat-process-hooks
+        threat-process-injection-dll
+        threat-process-powershell-encoded
+        threat-process-sysinfo
+        threat-runtime-enumeration
+        threat-runtime-keylogging
+        threat-runtime-obfuscation-api
+        threat-runtime-obfuscation-chr
+        threat-runtime-obfuscation-dynamic-eval
+        threat-runtime-obfuscation-hidden-code
+        threat-runtime-obfuscation-import-exec
+        threat-runtime-obfuscation-js-mangling
+        threat-runtime-obfuscation-log-suppress
+        threat-runtime-obfuscation-pyarmor
+        threat-runtime-screencapture
+        threat-runtime-self-propagation
+        threat-setup-import-aliasing
+        threat-setup-network-in-install
+        threat-setup-suspicious-imports
+        typosquatting
+        unclaimed_maintainer_email_domain
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -266,32 +321,36 @@ jobs:
       - name: Install GuardDog
         run: pipx install guarddog==3.2.0
       - name: Build the GuardDog rule allowlist
-        # Expanded once into the environment so the three scans below cannot
-        # drift apart, and so a rule added above reaches npm and PyPI alike.
-        # The result is a flat `-r a -r b ...` string, expanded UNQUOTED at each
-        # call site on purpose: it is a fixed literal from this file, never input.
+        # Expanded once per ecosystem into the environment, so the scans below
+        # cannot drift from the lists above. The result is a flat `-r a -r b ...`
+        # string, expanded UNQUOTED at each call site on purpose: it is a fixed
+        # literal from this file, never input.
         run: |
-          args=""
-          while read -r rule; do
-            [ -n "$rule" ] || continue
-            args="$args -r $rule"
-          done <<< "$GUARDDOG_RULES"
-          echo "GUARDDOG_ARGS=$args" >> "$GITHUB_ENV"
+          build() {
+            local args=""
+            while read -r rule; do
+              [ -n "$rule" ] || continue
+              args="$args -r $rule"
+            done
+            echo "$args"
+          }
+          echo "GUARDDOG_ARGS_PYPI=$(build <<< "$GUARDDOG_RULES_PYPI")" >> "$GITHUB_ENV"
+          echo "GUARDDOG_ARGS_NPM=$(build <<< "$GUARDDOG_RULES_NPM")" >> "$GITHUB_ENV"
       - name: Scan npm dependencies
         # `verify` scans every package in the lockfile/manifest present.
         # Without this flag GuardDog reports detections but still exits zero.
         if: hashFiles('package.json') != ''
-        run: guarddog npm verify $GUARDDOG_ARGS --exit-non-zero-on-finding package.json
+        run: guarddog npm verify $GUARDDOG_ARGS_NPM --exit-non-zero-on-finding package.json
       - name: Scan PyPI dependencies (uv)
         if: hashFiles('uv.lock') != ''
         run: |
           # uv can emit local editable paths (`-e ../sibling`); GuardDog's
           # requirements sanitizer deliberately ignores option-prefixed lines.
           uv export --no-hashes --no-emit-project --format requirements-txt > "$RUNNER_TEMP/requirements.txt"
-          guarddog pypi verify $GUARDDOG_ARGS --exit-non-zero-on-finding "$RUNNER_TEMP/requirements.txt"
+          guarddog pypi verify $GUARDDOG_ARGS_PYPI --exit-non-zero-on-finding "$RUNNER_TEMP/requirements.txt"
       - name: Scan PyPI dependencies (requirements.txt)
         if: hashFiles('requirements.txt') != ''
-        run: guarddog pypi verify $GUARDDOG_ARGS --exit-non-zero-on-finding requirements.txt
+        run: guarddog pypi verify $GUARDDOG_ARGS_PYPI --exit-non-zero-on-finding requirements.txt
       - name: Require a PyPI dependency input
         # Reached on every push and on any PR that touches a manifest, which is
         # the moment a Python repo could acquire dependencies with nothing able
