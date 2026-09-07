@@ -212,6 +212,13 @@ jobs:
       #
       # Re-derive this set against the new version when the pin moves; do not
       # hand-edit it. tests/test_supply_chain_ci.py pins the exact membership.
+      # The scans below run WITHOUT --exit-non-zero-on-finding on purpose, so a
+      # non-zero exit from GuardDog itself means a real failure rather than a
+      # finding. The gate is guarddog_allow.py: it fails the job on any finding
+      # not named in guarddog-allow.toml, and reports acceptances that have
+      # lapsed, carry no date, or have stopped matching anything.
+      GD_ALLOW: .github/actions/supply-chain/supply_chain/guarddog_allow.py
+      GD_ALLOWLIST: .github/actions/supply-chain/guarddog-allow.toml
       GUARDDOG_RULES_PYPI: |
         deceptive_author
         metadata_mismatch
@@ -227,16 +234,15 @@ jobs:
         threat-process-cryptomining
         threat-process-hooks
         threat-process-injection-dll
-        threat-process-memory
         threat-process-powershell-encoded
         threat-process-sysinfo
         threat-runtime-enumeration
         threat-runtime-keylogging
-        threat-runtime-obfuscation
         threat-runtime-obfuscation-api
         threat-runtime-obfuscation-base64exec
         threat-runtime-obfuscation-chr
         threat-runtime-obfuscation-dynamic-eval
+        threat-runtime-obfuscation-general
         threat-runtime-obfuscation-hidden-code
         threat-runtime-obfuscation-import-exec
         threat-runtime-obfuscation-js-mangling
@@ -275,30 +281,47 @@ jobs:
         deceptive_author
         direct_url_dependency
         potentially_compromised_email_domain
+        provenance_regression
         risky_new_dependency
+        threat-filesystem-autostart
+        threat-filesystem-destruction
+        threat-filesystem-read
         threat-network-dns-exfil
         threat-network-exfil-messenger
+        threat-network-exfil-sysinfo
+        threat-network-exfiltration
+        threat-network-outbound-shady-links
         threat-network-reverse-shell
         threat-npm-dependency-confusion
         threat-npm-http-dependency
         threat-npm-preinstall-script
         threat-process-cryptomining
+        threat-process-download-exec
         threat-process-hooks
         threat-process-injection-dll
+        threat-process-memory
         threat-process-powershell-encoded
+        threat-process-spawn-silent
         threat-process-sysinfo
+        threat-runtime-dynamic-loader
         threat-runtime-enumeration
         threat-runtime-keylogging
+        threat-runtime-obfuscation
         threat-runtime-obfuscation-api
+        threat-runtime-obfuscation-base64exec
         threat-runtime-obfuscation-chr
         threat-runtime-obfuscation-dynamic-eval
+        threat-runtime-obfuscation-general
         threat-runtime-obfuscation-hidden-code
         threat-runtime-obfuscation-import-exec
         threat-runtime-obfuscation-js-mangling
         threat-runtime-obfuscation-log-suppress
         threat-runtime-obfuscation-pyarmor
+        threat-runtime-obfuscation-steganography
+        threat-runtime-obfuscation-unicode
         threat-runtime-screencapture
         threat-runtime-self-propagation
+        threat-runtime-system-info
         threat-setup-import-aliasing
         threat-setup-network-in-install
         threat-setup-suspicious-imports
@@ -340,17 +363,22 @@ jobs:
         # `verify` scans every package in the lockfile/manifest present.
         # Without this flag GuardDog reports detections but still exits zero.
         if: hashFiles('package.json') != ''
-        run: guarddog npm verify $GUARDDOG_ARGS_NPM --exit-non-zero-on-finding package.json
+        run: |
+          guarddog npm verify $GUARDDOG_ARGS_NPM --output-format json package.json > "$RUNNER_TEMP/npm.json"
+          python3 "$GD_ALLOW" "$RUNNER_TEMP/npm.json" --allowlist "$GD_ALLOWLIST"
       - name: Scan PyPI dependencies (uv)
         if: hashFiles('uv.lock') != ''
         run: |
           # uv can emit local editable paths (`-e ../sibling`); GuardDog's
           # requirements sanitizer deliberately ignores option-prefixed lines.
           uv export --no-hashes --no-emit-project --format requirements-txt > "$RUNNER_TEMP/requirements.txt"
-          guarddog pypi verify $GUARDDOG_ARGS_PYPI --exit-non-zero-on-finding "$RUNNER_TEMP/requirements.txt"
+          guarddog pypi verify $GUARDDOG_ARGS_PYPI --output-format json "$RUNNER_TEMP/requirements.txt" > "$RUNNER_TEMP/uv.json"
+          python3 "$GD_ALLOW" "$RUNNER_TEMP/uv.json" --allowlist "$GD_ALLOWLIST"
       - name: Scan PyPI dependencies (requirements.txt)
         if: hashFiles('requirements.txt') != ''
-        run: guarddog pypi verify $GUARDDOG_ARGS_PYPI --exit-non-zero-on-finding requirements.txt
+        run: |
+          guarddog pypi verify $GUARDDOG_ARGS_PYPI --output-format json requirements.txt > "$RUNNER_TEMP/req.json"
+          python3 "$GD_ALLOW" "$RUNNER_TEMP/req.json" --allowlist "$GD_ALLOWLIST"
       - name: Require a PyPI dependency input
         # Reached on every push and on any PR that touches a manifest, which is
         # the moment a Python repo could acquire dependencies with nothing able
