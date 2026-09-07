@@ -11,8 +11,9 @@ from __future__ import annotations
 import datetime as dt
 import os
 import re
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 from estate.findings import Finding, Severity
 
