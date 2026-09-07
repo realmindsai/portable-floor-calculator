@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # ABOUTME: Flags osv-scanner ignore entries that have lapsed or were never time-bounded
 # ABOUTME: An acceptance nobody revisits is indistinguishable from a suppressed finding
 

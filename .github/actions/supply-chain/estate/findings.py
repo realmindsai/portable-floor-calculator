@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from enum import IntEnum
-import re
-
 
 _OSV_ADVISORY_ID = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._+]*-[A-Za-z0-9][A-Za-z0-9._+:-]*"
@@ -64,7 +63,7 @@ class Severity(IntEnum):
     P0 = 4
 
     @classmethod
-    def from_name(cls, name: str) -> "Severity":
+    def from_name(cls, name: str) -> Severity:
         return cls[name.strip().upper()]
 
 
@@ -102,7 +101,7 @@ class Finding:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Finding":
+    def from_dict(cls, d: dict) -> Finding:
         identity = _normalized_identity(d.get("identity", ""))
         if not identity and d.get("check") == "cve-version":
             identity = _legacy_osv_identity(

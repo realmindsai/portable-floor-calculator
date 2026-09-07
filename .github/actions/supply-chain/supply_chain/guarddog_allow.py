@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # ABOUTME: Gates a GuardDog JSON scan against a per-package, per-rule allowlist
 # ABOUTME: Naming 12 noisy packages beats disarming 11 rules for the whole fleet
 
