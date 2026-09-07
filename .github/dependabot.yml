@@ -1,0 +1,17 @@
+# Dependabot — security updates only, grouped, weekly, no auto-merge.
+# Security-only (no scheduled version bumps) keeps this aligned with the
+# supply-chain cooldown ethos: version updates would raise PRs for brand-new
+# releases (the malicious-package window min-release-age=3 exists to block),
+# whereas security updates target already-vetted advisories. Repo-level
+# "Dependabot security updates" must also be ON (free, incl. private repos).
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
