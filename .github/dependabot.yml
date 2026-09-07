@@ -10,7 +10,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    # 0 disables scheduled version updates; security updates ignore this limit.
+    open-pull-requests-limit: 0
     groups:
       security:
         applies-to: security-updates
