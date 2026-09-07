@@ -369,9 +369,15 @@ jobs:
       - name: Scan PyPI dependencies (uv)
         if: hashFiles('uv.lock') != ''
         run: |
-          # uv can emit local editable paths (`-e ../sibling`); GuardDog's
-          # requirements sanitizer deliberately ignores option-prefixed lines.
-          uv export --no-hashes --no-emit-project --format requirements-txt > "$RUNNER_TEMP/requirements.txt"
+          # --frozen: export straight from uv.lock, never re-resolve. Without it,
+          # uv generates metadata for every entry, including local siblings
+          # (`editable+../rmai-audit`) that do not exist in a single-repo CI
+          # checkout — which fails the whole step with exit 2. Three repos went
+          # red on main this way (jot-v2, kb-mcp, ms365-mcp).
+          # --no-emit-local: drop those siblings from the output entirely. They
+          # come from the filesystem, not an index, so GuardDog cannot scan them
+          # and osv-scanner already covers the tree they live in.
+          uv export --no-hashes --no-emit-project --frozen --no-emit-local --format requirements-txt > "$RUNNER_TEMP/requirements.txt"
           guarddog pypi verify $GUARDDOG_ARGS_PYPI --output-format json "$RUNNER_TEMP/requirements.txt" > "$RUNNER_TEMP/uv.json"
           python3 "$GD_ALLOW" "$RUNNER_TEMP/uv.json" --allowlist "$GD_ALLOWLIST"
       - name: Scan PyPI dependencies (requirements.txt)
