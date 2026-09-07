@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 import click
-
 from estate.findings import Finding, Severity
 
 from .cooldown import scan_tree
