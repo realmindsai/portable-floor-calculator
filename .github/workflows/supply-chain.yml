@@ -31,6 +31,14 @@ on:
 permissions:
   contents: read
 
+# A second push to an open PR used to leave its predecessor running to
+# completion, billing every job of it. Cancel only pull_request runs: a push or
+# the weekly cron has no successor to supersede it, and cancelling the cron
+# would lose the re-scan that is its whole purpose.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Two osv-scanner jobs, dispatched on event, because the upstream reusable
 # workflows are NOT interchangeable:
 #
@@ -50,6 +58,7 @@ permissions:
 # fails only on findings it actually introduced, so softening the PR job would
 # discard the one signal worth keeping.
 jobs:
+
   osv-scan-pr:
     # PRs: diff head against base, report only what this PR introduces.
     if: github.event_name == 'pull_request'
@@ -93,7 +102,25 @@ jobs:
         ./
       upload-sarif: false
 
-  dependency-manifest-changes:
+  preflight:
+    # Three checks that read nothing but this repo's own files: the dependency
+    # manifest diff, the osv-scanner ignore dates, and the uv publish-age gate.
+    # They were three jobs until 2026-09-07 and they take about six seconds each.
+    #
+    # Every JOB carries a one-minute billing floor. Measured across 15 runs that
+    # day: 72 billed job-minutes for 853 seconds of real work, 5.1x overhead --
+    # which spent 2,919 of the org's 3,000 included minutes in seven days, during
+    # the sweep that was hardening these very repos. The two osv-scanner jobs
+    # cannot be merged (a `uses:` reusable-workflow call must be its own job), so
+    # the cheap local checks sharing one job is the only lever there is.
+    #
+    # Each check after the first carries `!cancelled()`. As separate jobs they
+    # failed independently; plain step ordering would stop at the first failure
+    # and hide a lapsed osv ignore behind a cooldown violation. The `${{ }}` is
+    # not optional -- a bare leading `!` is a YAML tag indicator.
+    #
+    # tests/test_supply_chain_ci.py pins all of this, including the two-billed-job
+    # count for a PR that touches no manifest.
     # Does this event need the behavioural scan at all?
     #
     # GuardDog's 20m36s for 139 packages (measured in realmindsai/speaker-id#62)
@@ -139,41 +166,50 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-  osv-ignore-expiry:
-    # Watches the `ignoreUntil` dates in every osv-scanner.toml.
-    #
-    # osv-scanner already goes red once a date has passed -- it simply stops
-    # honouring the ignore. What has no signal at all is the run-up to that, and
-    # an acceptance carrying no end date, which nothing ever revisits. Both leave
-    # a `reason` string standing long after the constraint it describes is gone:
-    # realmindsai/speaker-id#53 found 18 of 21 entries matching nothing, several
-    # justified by pins that had since been bumped away.
-    #
-    # Findings are emitted as workflow commands, so they annotate osv-scanner.toml
-    # on the PR. Burying them in a log would reproduce the failure they target.
-    #
-    # Deliberately ungated: an ignore lapses with the calendar, not with a commit,
-    # so gating this on a manifest diff would hide it exactly when it matters. It
-    # is stdlib-only and offline, so running it every time costs seconds.
-    # (realmindsai/security#6)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # Watches the `ignoreUntil` dates in every osv-scanner.toml.
+      #
+      # osv-scanner already goes red once a date has passed -- it simply stops
+      # honouring the ignore. What has no signal at all is the run-up to that, and
+      # an acceptance carrying no end date, which nothing ever revisits. Both leave
+      # a `reason` string standing long after the constraint it describes is gone:
+      # realmindsai/speaker-id#53 found 18 of 21 entries matching nothing, several
+      # justified by pins that had since been bumped away.
+      #
+      # Findings are emitted as workflow commands, so they annotate osv-scanner.toml
+      # on the PR. Burying them in a log would reproduce the failure they target.
+      #
+      # Deliberately ungated: an ignore lapses with the calendar, not with a commit,
+      # so gating this on a manifest diff would hide it exactly when it matters. It
+      # is stdlib-only and offline, so running it every time costs seconds.
+      # (realmindsai/security#6)
+      # No setup-python and no uv: the checker imports nothing but the standard
+      # library, which is the reason it can run straight from the stamped
+      # payload. It needs tomllib, so python3 >= 3.11 -- every current runner
+      # image ships 3.12, and an older one fails loudly on the import.
       - name: Warn before an osv-scanner ignore lapses
+        if: ${{ !cancelled() }}
         # No setup-python and no uv: the checker imports nothing but the standard
         # library, which is the reason it can run straight from the stamped
         # payload. It needs tomllib, so python3 >= 3.11 -- every current runner
         # image ships 3.12, and an older one fails loudly on the import.
         run: python3 .github/actions/supply-chain/supply_chain/osv_ignores.py
 
+      # The CLI exits 2 on HIGH findings, so a missing, invalid or sub-policy
+      # publish-age gate blocks the PR instead of becoming an operator memory test.
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        if: ${{ !cancelled() && hashFiles('uv.lock') != '' }}
+      - name: Enforce uv publish-age cooldown
+        if: ${{ !cancelled() && hashFiles('uv.lock') != '' }}
+        uses: ./.github/actions/supply-chain
+
   guarddog:
     # Behavioural scan of declared dependencies for both ecosystems.
     #
     # Only when a dependency manifest actually changed -- see
-    # dependency-manifest-changes above for why, and for why push/schedule
+    # the preflight job above for why, and for why push/schedule
     # always report changed=true.
-    needs: dependency-manifest-changes
-    if: needs.dependency-manifest-changes.outputs.changed == 'true'
+    needs: preflight
+    if: ${{ !cancelled() && needs.preflight.outputs.changed == 'true' }}
     runs-on: ubuntu-latest
     env:
       # --- The rule allowlist (realmindsai/security#7) ---------------------------
@@ -393,15 +429,3 @@ jobs:
         run: |
           echo "::error::Python project has neither uv.lock nor requirements.txt; GuardDog cannot prove it scanned the declared dependencies."
           exit 1
-
-  cooldown:
-    # The CLI exits 2 on HIGH findings, so a missing, invalid or sub-policy
-    # publish-age gate blocks the PR instead of becoming an operator memory test.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        if: hashFiles('uv.lock') != ''
-      - name: Enforce uv publish-age cooldown
-        if: hashFiles('uv.lock') != ''
-        uses: ./.github/actions/supply-chain
