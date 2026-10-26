@@ -24,7 +24,14 @@ from estate.findings import Finding, Severity
 # jot-v2/.worktrees/mcp-refactor, speaker-id/.worktrees/voiceprint) are
 # dot-prefixed — a worktree is a second checkout of a repo already scanned,
 # so missing either form means a duplicate finding for the same pyproject.toml.
-SKIP_DIRS = {".venv", "node_modules", "worktrees", ".worktrees", "archive", ".git"}
+# "work" is dependabot-sweeper's gitignored scratch area: it clones the repos it
+# sweeps into work/<repo>/, so their locks are transient copies, not deployed
+# trees, and a finding there is noise (a daily Slack MED for
+# dependabot-sweeper/work/dependabot-sweeper-e2e). A name rule rather than
+# `git check-ignore`: nothing here shells to git, and on totoro svc-security
+# walks checkouts owned by other svc users, which git refuses as "dubious
+# ownership" without per-repo safe.directory entries.
+SKIP_DIRS = {".venv", "node_modules", "worktrees", ".worktrees", "archive", ".git", "work"}
 
 # uv accepts either a rolling window ("3 days", "P3D") or a fixed RFC-3339
 # floor ("2026-06-15", "2026-06-15T00:00:00Z"). Only the rolling form is a

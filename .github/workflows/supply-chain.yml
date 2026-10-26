@@ -366,6 +366,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        id: python
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -377,8 +378,14 @@ jobs:
       # reports on a re-run of the same tree. And rule filtering is only safe
       # while the rule catalogue is fixed. Treat a bump as a reviewed change:
       # re-derive the allowlist above against the new version.
+      #
+      # --python is load-bearing. pipx runs on the runner image's own Python, not
+      # on setup-python's, so the venv followed whatever ubuntu-latest shipped.
+      # On ubuntu-26.04 that is 3.14, where guarddog 3.2.0's pygit2<1.19 has no
+      # wheel and the sdist build has no libgit2 -- every guarddog job in the
+      # fleet failed at this step from 2026-10-26 (security-4dv).
       - name: Install GuardDog
-        run: pipx install guarddog==3.2.0
+        run: pipx install guarddog==3.2.0 --python "${{ steps.python.outputs.python-path }}"
       - name: Build the GuardDog rule allowlist
         # Expanded once per ecosystem into the environment, so the scans below
         # cannot drift from the lists above. The result is a flat `-r a -r b ...`
